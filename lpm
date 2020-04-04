@@ -8,6 +8,7 @@ from download import HTTPDownload, GITDownload, SVNDownload
 from packagemanager import PackageManager
 from opm import OnlinePackageManager
 from logger import Logger, LogLevel
+from project import LazarusProject
 
 def performUpdate(opm):
     opm.downloadPackageList()
@@ -104,6 +105,49 @@ def handleLazarus(lpm, action, name, path):
         return lpm.removeLazarus(name)
     return False
 
+def performBuild(lpm, opm, lazarus, project, modes, yes, logger):
+    lazbuild = lpm.getLazbuild(lazarus)
+    if lazbuild is None:
+        return False
+    project = LazarusProject(Path(project))
+    basePackages = lpm.getLazarusbasePackages(lazarus)
+    if basePackages is None:
+        return False
+    availableModes = project.getModes()
+    if len(modes) == 0:
+        modes = availableModes
+    dependencies = [f"{d}.lpk" for d in project.getDependencies()]
+    for dep in dependencies:
+        if dep in basePackages:
+            continue
+        pkg = lpm.packageByPackage(dep)
+        toInstall = None
+        if (pkg is not None) and (lazarus not in pkg.installed):
+            toInstall = pkg.name
+        elif pkg is None:
+            opmPkg = opm.packageMap.get(dep)
+            if opmPkg is None:
+                logger.error(f"dependency {dep} could not be resolved")
+                return False
+            toInstall = opmPkg.name
+        if toInstall is not None:
+            if not yes:
+                print(f"Dependency {dep} is found but not installed, install now?")
+                inp = input("[Y/n] > ")
+                if inp.lower() == "n":
+                    logger.error(f"dependency {dep} could not be resolved")
+                    return False
+            performInstall(lpm, opm, lazarus, [toInstall], logger)
+
+    result = True
+    for mode in modes:
+        if mode not in availableModes:
+            logger.error(f"Buildmode {mode} requested but not available for project")
+            result = False
+            continue
+        result = result and project.build(lazbuild, mode)
+    return result
+
 def main():
     parser = ArgumentParser(description="online package manager CLI")
     parser.add_argument("--target", type=str, help="target directory for the package list and downloaded packages (default=~/.lpm)", default="~/.lpm")
@@ -137,6 +181,12 @@ def main():
     lazArg.add_argument("name", type=str, help="name of the lazarus installation (for references)")
     lazArg.add_argument("path", nargs="?", type=str, help="path of the lazarus installation")
 
+    buildArg = sp.add_parser("build", help="buidling lazarus projects")
+    buildArg.add_argument("--yes", "-y", action="store_true", default=False, required=False, help="answer all yes-no questions with yes")
+    buildArg.add_argument("lazarus", type=str, help="lazarus configuration to use to build with")
+    buildArg.add_argument("project", type=str, help="lpi file to build")
+    buildArg.add_argument("modes", type=str, nargs="*", help="the build modes to build, if left out, all are build")
+
     args = parser.parse_args()
 
     quiet = args.quiet
@@ -167,6 +217,8 @@ def main():
         success = performDirectDownload(lpm, args.name, args.url, args.type, args.branch, args.packages, logger)
     elif action == "lazarus":
         success = handleLazarus(lpm, args.action, args.name, args.path)
+    elif action == "build":
+        success = performBuild(lpm, opm, args.lazarus, args.project, args.modes, args.yes, logger)
 
     lpm.save()
     if not success:

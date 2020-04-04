@@ -84,6 +84,12 @@ class PackageManager:
         downloader = pkg.getDownloader(self.logger)
         packages = [f"{pkg.package_dir}/{fl.getFilename()}" for fl in pkg.files]
         return self.fetchFromDownloader(pkg.name, downloader, pkg.file_date, packages)
+    def getLazbuild(self, lazarusName):
+        lazarus = self.installations.get(lazarusName)
+        if lazarus is None:
+            self.logger.error(f"No such lazarus installation found: {lazarusName}")
+            return None
+        return lazarus/lazbuildName
     def installPackage(self, lazarusName, packageName):
         # resolve package
         pkg = self.packages.get(packageName)
@@ -92,17 +98,15 @@ class PackageManager:
             return False
         pkgDir = self.target/"packages"/pkg.directory
         #resolve lazbuild
-        lazarus = self.installations.get(lazarusName)
-        if lazarus is None:
-            print(f"No such lazarus installation found: {lazarusName}")
+        lazbuild = self.getLazbuild(lazarusName)
+        if lazbuild is None:
             return False
-        lazbuild = lazarus/lazbuildName
         # call lazbuild for all lpks
         result = True
         for fl in pkg.package_files:
             self.logger.log(f"installing {fl}")
             pkgFile = pkgDir/fl
-            result = result and call([lazbuild, "--add-package-link", pkgFile.resolve()]) == 0
+            result = result and call([lazbuild.resolve(), "--add-package-link", pkgFile.resolve()]) == 0
         # add lazarus version to installed list
         pkg.installed.add(str(lazarusName))
         return result
@@ -114,3 +118,19 @@ class PackageManager:
             self.logger.error(f"Installation {name} not found")
             return False
         del self.installations[name]
+    def packageByPackage(self, lpkName):
+        for _, pkg in self.packages.items():
+            for fl in pkg.package_files:
+                fName = Path(fl).name
+                if fName == lpkName:
+                    return pkg
+        return None
+    def getLazarusbasePackages(self, lazarusName):
+        lazarus = self.installations.get(lazarusName)
+        compDir = lazarus/"components"
+        result = ["FCL.lpk", "LCL.lpk", "LCLBase.lpk"]
+        if lazarus is None:
+            self.logger.error(f"No such lazarus installation found: {lazarusName}")
+            return None
+        result.extend([p.name for p in compDir.rglob("*.lpk")])
+        return result

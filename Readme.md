@@ -43,12 +43,26 @@ $> ./lpm install 2.0.6 Indy10 indy
 ```
 If a package was not downloaded previously, but can be found with the OPM (like Indy10), it will be downloaded. Of course there is no way to find non OPM packages without downloading them beforehand with `direct-download`
 
+To ease building of projects as well as package searching, the command `build` provides a wrapper that:
+1. seaches all the required packages that where not previously downloaded in the OPM
+2. installs missing packages that where not installed to the given lazarus version
+3. compiles the project using lazbuild
+
+It also supports lazarus build modes, so if you want to build the build mode Release and Release64 you can use the following
+```
+$> ./lpm build 2.0.6 projectPath Release Release64
+```
+If no build mode is given, all will be build. Also, it will ask you before installing packages, to skip this pass the `-y` or `--yes` option
+
 The last command is `upgrade`, which takes all packages installed via OPM, and downloads (and installs) the newest version of them, if a newer one is available than installed.
 
 So to summarize, to build a program that requires packages the following has to be done:
 ```
 $> lpm update
 $> lpm lazarus add 2.0.6 /developer/lazarus/2.0.6
+# manual install
 $> lpm install 2.0.6 Indy10
 $> lazbuild project.lpi
+# Or simply
+$> lpm build -y 2.0.6 project.lpi
 ```

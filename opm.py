@@ -96,7 +96,7 @@ class OnlinePackageManager:
         result = {}
         for _, pkg in self.packages.items():
             for fl in pkg.files:
-                result[fl.name[:-4]] = pkg
+                result[fl.name] = pkg
         return result
     def downloadPackageList(self):
         HTTPDownload(f"{repositoryURL}/packagelist.json", targetFileName, logger=self.logger).download(self.target)
@@ -108,7 +108,7 @@ class OnlinePackageManager:
             return
         with open(destFile, "r") as f:
             self.packages = readPackageList(json.load(f))
-        self.__constructPackageNameMap()
+        self.packageMap = self.__constructPackageNameMap()
     def searchPackages(self, searchString):
         result = set()
         for name, pkg in self.packages.items():
