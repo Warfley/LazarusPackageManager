@@ -1,0 +1,69 @@
+object Form1: TForm1
+  Left = 399
+  Height = 240
+  Top = 250
+  Width = 320
+  Caption = 'Form1'
+  ClientHeight = 240
+  ClientWidth = 320
+  object Memo1: TMemo
+    Left = 0
+    Height = 206
+    Top = 34
+    Width = 320
+    Align = alClient
+    Lines.Strings = (
+      'Memo1'
+    )
+    TabOrder = 0
+  end
+  object Panel1: TPanel
+    Left = 0
+    Height = 34
+    Top = 0
+    Width = 320
+    Align = alTop
+    BevelOuter = bvNone
+    ClientHeight = 34
+    ClientWidth = 320
+    TabOrder = 1
+    object Edit1: TEdit
+      Left = 0
+      Height = 34
+      Top = 0
+      Width = 245
+      Align = alClient
+      TabOrder = 0
+      Text = 'https://google.de'
+    end
+    object Button1: TButton
+      Left = 245
+      Height = 34
+      Top = 0
+      Width = 75
+      Align = alRight
+      Caption = 'Load'
+      OnClick = Button1Click
+      TabOrder = 1
+    end
+  end
+  object IdHTTP1: TIdHTTP
+    ProxyParams.BasicAuthentication = False
+    ProxyParams.ProxyPort = 0
+    Request.ContentLength = -1
+    Request.ContentRangeEnd = -1
+    Request.ContentRangeStart = -1
+    Request.ContentRangeInstanceLength = -1
+    Request.Date = 0
+    Request.Expires = 0
+    Request.LastModified = 0
+    Request.Accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    Request.BasicAuthentication = False
+    Request.UserAgent = 'Mozilla/3.0 (compatible; Indy Library)'
+    Request.Ranges.Units = 'bytes'
+    Request.Ranges = <>
+    HTTPOptions = [hoForceEncodeParams]
+    left = 259
+    top = 48
+  end
+end
