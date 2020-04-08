@@ -25,11 +25,11 @@ def performFetch(lpm, opm, packages, logger):
         result = result and lpm.fetchFromOPM(pkg)
     return result
 
-def performInstall(lpm, opm, lazName, packages, logger):
+def performInstall(lpm, opm, packages, logger):
     fetchFirst = [p for p in packages if p not in lpm.packages]
     result = performFetch(lpm, opm, fetchFirst, logger)
     for pkgName in packages:
-        result = result and lpm.installPackage(lazName, pkgName)
+        result = result and lpm.installPackage(pkgName)
     return result
 
 def performUpgrade(lpm, opm, packages, logger):
@@ -52,8 +52,13 @@ def performUpgrade(lpm, opm, packages, logger):
         if not pkgResult:
             result = False
             continue
+        sel = lpm.selected
         for i in pkg.installed:
-            result = result and performInstall(lpm, opm, i, [p], logger)
+            if lpm.selectLazarus(i):
+                result = result and performInstall(lpm, opm, [p], logger)
+            else:
+                result = False
+            lpm.selectLazarus(sel)
     return result
 
 def performSearch(opm, searchstring):
@@ -103,14 +108,16 @@ def handleLazarus(lpm, action, name, path):
         return lpm.addLazarus(name, path)
     if action == "delete":
         return lpm.removeLazarus(name)
+    if action == "select":
+        return lpm.selectLazarus(name)
     return False
 
-def performBuild(lpm, opm, lazarus, project, modes, yes, logger):
-    lazbuild = lpm.getLazbuild(lazarus)
+def performBuild(lpm, opm, project, modes, yes, logger):
+    lazbuild = lpm.getLazbuild()
     if lazbuild is None:
         return False
     project = LazarusProject(Path(project))
-    basePackages = lpm.getLazarusbasePackages(lazarus)
+    basePackages = lpm.getLazarusbasePackages()
     if basePackages is None:
         return False
     availableModes = project.getModes()
@@ -137,7 +144,7 @@ def performBuild(lpm, opm, lazarus, project, modes, yes, logger):
                 if inp.lower() == "n":
                     logger.error(f"dependency {dep} could not be resolved")
                     return False
-            performInstall(lpm, opm, lazarus, [toInstall], logger)
+            performInstall(lpm, opm, [toInstall], logger)
 
     result = True
     for mode in modes:
@@ -163,7 +170,6 @@ def main():
     fetchArg.add_argument("packages", type=str, help="packages to download", nargs="+")
 
     installArg = sp.add_parser("install", help="installs the package to a lazarus installation")
-    installArg.add_argument("lazarus", type=str, help="the lazarus installation to add the package to")
     installArg.add_argument("packages", type=str, help="packages to install", nargs="+")
 
     searchArg = sp.add_parser("search", help="search for packages")
@@ -177,13 +183,12 @@ def main():
     rawArg.add_argument("packages", type=str, nargs="*", help="list of lpk files in that file, if none are given a file search for *.lpk will be done")
 
     lazArg = sp.add_parser("lazarus", help="configure lazarus installations")
-    lazArg.add_argument("action", type=str, choices=["add", "delete"], help="action to perform")
+    lazArg.add_argument("action", type=str, choices=["add", "delete", "select"], help="action to perform")
     lazArg.add_argument("name", type=str, help="name of the lazarus installation (for references)")
     lazArg.add_argument("path", nargs="?", type=str, help="path of the lazarus installation")
 
     buildArg = sp.add_parser("build", help="buidling lazarus projects")
     buildArg.add_argument("--yes", "-y", action="store_true", default=False, required=False, help="answer all yes-no questions with yes")
-    buildArg.add_argument("lazarus", type=str, help="lazarus configuration to use to build with")
     buildArg.add_argument("project", type=str, help="lpi file to build")
     buildArg.add_argument("modes", type=str, nargs="*", help="the build modes to build, if left out, all are build")
 
@@ -210,7 +215,7 @@ def main():
     elif action == "fetch":
         success = performFetch(lpm, opm, args.packages, logger)
     elif action == "install":
-        success = performInstall(lpm, opm, args.lazarus, args.packages, logger)
+        success = performInstall(lpm, opm, args.packages, logger)
     elif action == "search":
         success = performSearch(opm, args.searchstring)
     elif action == "direct-download":
@@ -218,7 +223,7 @@ def main():
     elif action == "lazarus":
         success = handleLazarus(lpm, args.action, args.name, args.path)
     elif action == "build":
-        success = performBuild(lpm, opm, args.lazarus, args.project, args.modes, args.yes, logger)
+        success = performBuild(lpm, opm, args.project, args.modes, args.yes, logger)
 
     lpm.save()
     if not success:

@@ -37,6 +37,7 @@ class PackageManager:
         self.configFile = target/"lpm.json"
         self.packages = {}
         self.installations = {}
+        self.selected = None
     def load(self):
         self.packages = {}
         self.installations = {}
@@ -48,6 +49,7 @@ class PackageManager:
             self.packages[p.name] = p
         for n, p in serialized["installations"].items():
             self.installations[n] = Path(p)
+        self.selected = serialized.get("selected")
     def save(self):
         installations = {}
         for n, p in self.installations.items():
@@ -57,6 +59,8 @@ class PackageManager:
             "installations": installations,
             "packages": [p.serialize() for _, p in self.packages.items()]
         }
+        if self.selected is not None:
+            serialized["selected"] = self.selected
         with open(self.configFile, "w") as f:
             json.dump(serialized, f, indent=2)
     def fetchFromDownloader(self, name, downloader, date, packages):
@@ -84,13 +88,13 @@ class PackageManager:
         downloader = pkg.getDownloader(self.logger)
         packages = [f"{pkg.package_dir}/{fl.getFilename()}" for fl in pkg.files]
         return self.fetchFromDownloader(pkg.name, downloader, pkg.file_date, packages)
-    def getLazbuild(self, lazarusName):
-        lazarus = self.installations.get(lazarusName)
+    def getLazbuild(self):
+        lazarus = self.installations.get(self.selected)
         if lazarus is None:
-            self.logger.error(f"No such lazarus installation found: {lazarusName}")
+            self.logger.error(f"No such lazarus installation found: {self.selected}")
             return None
         return lazarus/lazbuildName
-    def installPackage(self, lazarusName, packageName):
+    def installPackage(self, packageName):
         # resolve package
         pkg = self.packages.get(packageName)
         if pkg is None:
@@ -98,7 +102,7 @@ class PackageManager:
             return False
         pkgDir = self.target/"packages"/pkg.directory
         #resolve lazbuild
-        lazbuild = self.getLazbuild(lazarusName)
+        lazbuild = self.getLazbuild()
         if lazbuild is None:
             return False
         # call lazbuild for all lpks
@@ -108,16 +112,26 @@ class PackageManager:
             pkgFile = pkgDir/fl
             result = result and call([lazbuild.resolve(), "--add-package-link", pkgFile.resolve()]) == 0
         # add lazarus version to installed list
-        pkg.installed.add(str(lazarusName))
+        pkg.installed.add(str(self.selected))
         return result
     def addLazarus(self, name, path):
         self.installations[name] = path
+        if self.selected is None:
+            self.selected = name
         return True
     def removeLazarus(self, name):
         if name not in self.installations:
             self.logger.error(f"Installation {name} not found")
             return False
+        if self.selected == name:
+            self.selected = None if len(self.installations) == 0 else self.installations.keys()[0]
         del self.installations[name]
+        return True
+    def selectLazarus(self, name):
+        if name is not None and name not in self.installations:
+            return False
+        self.selected = name
+        return True
     def packageByPackage(self, lpkName):
         for _, pkg in self.packages.items():
             for fl in pkg.package_files:
@@ -125,12 +139,12 @@ class PackageManager:
                 if fName == lpkName:
                     return pkg
         return None
-    def getLazarusbasePackages(self, lazarusName):
-        lazarus = self.installations.get(lazarusName)
+    def getLazarusbasePackages(self):
+        lazarus = self.installations.get(self.selected)
         compDir = lazarus/"components"
         result = ["FCL.lpk", "LCL.lpk", "LCLBase.lpk"]
         if lazarus is None:
-            self.logger.error(f"No such lazarus installation found: {lazarusName}")
+            self.logger.error(f"No such lazarus installation found: {self.selected}")
             return None
         result.extend([p.name for p in compDir.rglob("*.lpk")])
         return result

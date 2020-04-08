@@ -36,10 +36,14 @@ To install any packages we first need to register a lazarus verions where we wan
 ```
 $> ./lpm lazarus add 2.0.6 /developer/lazarus/2.0.6
 ```
-We can then install packages
+The LPM stores the current lazarus version to perform operations on. The first one added will be the default one, it can be switched via:
+```
+$> ./lpm lazarus select 2.0.6
+```
+We can then install packages to the currently selected lazarus version
 ```
 # the OPM package and the downloaded package
-$> ./lpm install 2.0.6 Indy10 indy
+$> ./lpm install Indy10 indy
 ```
 If a package was not downloaded previously, but can be found with the OPM (like Indy10), it will be downloaded. Of course there is no way to find non OPM packages without downloading them beforehand with `direct-download`
 
@@ -50,7 +54,7 @@ To ease building of projects as well as package searching, the command `build` p
 
 It also supports lazarus build modes, so if you want to build the build mode Release and Release64 you can use the following
 ```
-$> ./lpm build 2.0.6 projectPath Release Release64
+$> ./lpm build projectPath Release Release64
 ```
 If no build mode is given, all will be build. Also, it will ask you before installing packages, to skip this pass the `-y` or `--yes` option
 
@@ -61,8 +65,8 @@ So to summarize, to build a program that requires packages the following has to 
 $> lpm update
 $> lpm lazarus add 2.0.6 /developer/lazarus/2.0.6
 # manual install
-$> lpm install 2.0.6 Indy10
+$> lpm install Indy10
 $> lazbuild project.lpi
 # Or simply
-$> lpm build -y 2.0.6 project.lpi
+$> lpm build -y project.lpi
 ```
