@@ -115,7 +115,7 @@ class PackageManager:
         pkg.installed.add(str(self.selected))
         return result
     def addLazarus(self, name, path):
-        self.installations[name] = path
+        self.installations[name] = str(path.resolve())
         if self.selected is None:
             self.selected = name
         return True

@@ -105,7 +105,7 @@ def performDirectDownload(lpm, name, url, dltype, branch, packages, logger):
 
 def handleLazarus(lpm, action, name, path):
     if action == "add":
-        return lpm.addLazarus(name, path)
+        return lpm.addLazarus(name, Path(path).expanduser())
     if action == "delete":
         return lpm.removeLazarus(name)
     if action == "select":
@@ -116,7 +116,7 @@ def performBuild(lpm, opm, project, modes, yes, logger):
     lazbuild = lpm.getLazbuild()
     if lazbuild is None:
         return False
-    project = LazarusProject(Path(project))
+    project = LazarusProject(Path(project).expanduser())
     basePackages = lpm.getLazarusbasePackages()
     if basePackages is None:
         return False
@@ -195,7 +195,7 @@ def main():
     args = parser.parse_args()
 
     quiet = args.quiet
-    target = Path(args.target)
+    target = Path(args.target).expanduser()
     makedirs(target, exist_ok=True)
 
     logger = Logger(LogLevel.WARNING if quiet else LogLevel.DEBUG)
