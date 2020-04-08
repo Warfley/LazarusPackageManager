@@ -14,8 +14,10 @@ class LazarusProject:
     def getModes(self):
         optNode = self.tree.getroot().find("ProjectOptions")
         modeNode = optNode.find("BuildModes")
-        return [item.attrib["Name"] for item in modeNode]
+        return [item.attrib["Name"] for item in modeNode if item.tag.startswith("Item")]
     def getDependencies(self):
         optNode = self.tree.getroot().find("ProjectOptions")
         reqNode = optNode.find("RequiredPackages")
+        if reqNode is None:
+            return []
         return [item[0].attrib["Value"] for item in reqNode]
