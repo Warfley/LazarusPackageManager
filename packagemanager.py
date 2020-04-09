@@ -142,9 +142,9 @@ class PackageManager:
     def getLazarusbasePackages(self):
         lazarus = self.installations.get(self.selected)
         compDir = lazarus/"components"
-        result = ["FCL.lpk", "LCL.lpk", "LCLBase.lpk"]
+        result = ["fcl.lpk", "lcl.lpk", "lclbase.lpk"]
         if lazarus is None:
             self.logger.error(f"No such lazarus installation found: {self.selected}")
             return None
-        result.extend([p.name for p in compDir.rglob("*.lpk")])
+        result.extend([p.name.lower() for p in compDir.rglob("*.lpk")])
         return result

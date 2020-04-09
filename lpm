@@ -126,11 +126,12 @@ def performBuild(lpm, opm, project, modes, yes, logger):
         modes = availableModes
     dependencies = [f"{d}.lpk" for d in project.getDependencies()]
     for dep in dependencies:
+        dep = dep.lower()
         if dep in basePackages:
             continue
         pkg = lpm.packageByPackage(dep)
         toInstall = None
-        if (pkg is not None) and (lazarus not in pkg.installed):
+        if (pkg is not None) and (lpm.selected not in pkg.installed):
             toInstall = pkg.name
         elif pkg is None:
             opmPkg = opm.packageMap.get(dep)
