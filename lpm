@@ -9,6 +9,7 @@ from packagemanager import PackageManager
 from opm import OnlinePackageManager
 from logger import Logger, LogLevel
 from project import LazarusProject
+from subprocess import call
 
 def performUpdate(opm):
     opm.downloadPackageList()
@@ -155,6 +156,10 @@ def performBuild(lpm, opm, project, modes, yes, logger):
         result = result and project.build(lazbuild, mode)
     return result
 
+def performSelfUpdate():
+    git_dir = Path(__file__).resolve().parent
+    return call(["git", "pull"], cwd=git_dir) == 0
+
 def main():
     parser = ArgumentParser(description="online package manager CLI")
     parser.add_argument("--target", type=str, help="target directory for the package list and downloaded packages (default=~/.lpm)", default="~/.lpm")
@@ -192,6 +197,8 @@ def main():
     buildArg.add_argument("project", type=str, help="lpi file to build")
     buildArg.add_argument("modes", type=str, nargs="*", help="the build modes to build, if left out, all are build")
 
+    selfUpdateArg = sp.add_parser("self-update", help="Update lpm via git")
+
     args = parser.parse_args()
 
     quiet = args.quiet
@@ -224,6 +231,8 @@ def main():
         success = handleLazarus(lpm, args.action, args.name, args.path)
     elif action == "build":
         success = performBuild(lpm, opm, args.project, args.modes, args.yes, logger)
+    elif action == "self-update":
+        success = performSelfUpdate()
 
     lpm.save()
     if not success:
