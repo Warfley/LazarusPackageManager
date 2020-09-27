@@ -102,7 +102,7 @@ def performDirectDownload(lpm, name, url, dltype, branch, packages, logger):
     if download is None:
         print(f"download method {dltype} unkown")
         return False
-    return lpm.feetchFromDownloader(name, download, 0, packages)
+    return lpm.fetchFromDownloader(name, download, 0, packages)
 
 def handleLazarus(lpm, action, name, path):
     if action == "add":
