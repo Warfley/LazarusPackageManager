@@ -1,150 +1,161 @@
+from typing import List, Set, Dict, Any
 import json
 import os
 from pathlib import Path
 from os import makedirs
 from subprocess import call
 from shutil import rmtree
+from logger import Logger
+from download import Downloader
+from opm import OPMPackage
 
-lazbuildName = "lazbuild" + (".exe" if os.name == "nt" else "")
+LAZBUILD_EXEC_NAME = "lazbuild" + (".exe" if os.name == "nt" else "")
 
 
-class Package:
-    def __init__(self, name, directory, date, package_files, installed=[]):
-        self.name = name
-        self.directory = directory
-        self.date = date
-        self.package_files = package_files
-        self.installed = set(installed)
-    def serialize(self):
+class LocalPackage:
+    def __init__(self, name: str, date: int, package_files: List[Path], installed_in: List[str] = []):
+        self.name: str = name
+        self.date: int = date
+        self.package_files: List[Path] = package_files.copy()
+        self.installed_in: Set[str] = set(installed_in)
+
+    def serialize(self) -> Dict[str, Any]:
         return {
             "name": self.name,
             "date": self.date,
-            "directory": self.directory,
-            "packages": self.package_files,
-            "installed": list(self.installed)
+            "packages": [str(fl) for fl in self.package_files],
+            "installed": list(self.installed_in)
         }
-def deserializePackage(serialized):
-    return Package(serialized["name"],
-                         serialized["directory"],
-                         serialized["date"],
-                         serialized["packages"],
-                         serialized["installed"])
+
+    @staticmethod
+    def deserialize(serialized: Dict[str, Any]) -> "LocalPackage":
+        return LocalPackage(serialized["name"],
+                            serialized["date"],
+                            [Path(package) for package in serialized["packages"]],
+                            serialized["installed"])
 
 class PackageManager:
-    def __init__(self, target, logger):
-        self.logger = logger
-        self.target = target
-        self.configFile = target/"lpm.json"
-        self.packages = {}
-        self.installations = {}
-        self.selected = None
-    def load(self):
-        self.packages = {}
-        self.installations = {}
+    def __init__(self, target: Path, logger: Logger):
+        self.logger: Logger = logger
+        self.target: Path = target
+        self.configFile: Path = target/"lpm.json"
+        self.packages: Dict[str, LocalPackage] = {}
+        self.installations: Dict[str, Path] = {}
+        self.selected_installation: str = None
+    
+    def _get_package_directory(self, package: LocalPackage) -> Path:
+        return self.target/"packages"/package.name
+
+    def load(self) -> None:
         if not self.configFile.is_file():
             return
+
         with open(self.configFile, "r") as f:
             serialized = json.load(f)
-        for p in  [deserializePackage(p) for p in serialized["packages"]]:
-            self.packages[p.name] = p
-        for n, p in serialized["installations"].items():
-            self.installations[n] = Path(p)
-        self.selected = serialized.get("selected")
-    def save(self):
-        installations = {}
-        for n, p in self.installations.items():
-            installations[n] = str(p)
+        self.packages = {package_data["name"]: LocalPackage.deserialize(package_data) for package_data in serialized["packages"]}
+        self.installations = {name: Path(path) for name, path in serialized["installations"].items()}
+        self.selected_installation = serialized.get("selected")
+
+    def save(self) -> None:
         serialized = {
             "version": 1,
-            "installations": installations,
-            "packages": [p.serialize() for _, p in self.packages.items()]
+            "installations": {name: str(path) for name, path in self.installations.items()},
+            "packages": [package.serialize() for package in self.packages.values()]
         }
-        if self.selected is not None:
-            serialized["selected"] = self.selected
+        if self.selected_installation is not None:
+            serialized["selected"] = self.selected_installation
         with open(self.configFile, "w") as f:
             json.dump(serialized, f, indent=2)
-    def fetchFromDownloader(self, name, downloader, date, packages):
-        target = self.target/"packages"/name
+
+    def fetch_from_downloader(self, name: str, downloader: Downloader, date: int, packages: List[Path]) -> bool:
+        package_target = self.target/"packages"/name
         # remove old if there
-        if target.is_dir():
-            rmtree(target)
+        if package_target.is_dir():
+            rmtree(package_target)
         # download file
-        downloader.download(target)
+        downloader.download(package_target)
         # if no package names are given, search for lpks
         if len(packages) == 0:
-            pkgs = target.rglob("*.lpk")
-            packages = [str(p.relative_to(target)) for p in pkgs]
+            package_files = package_target.rglob("*.lpk")
+            packages = [p.relative_to(package_target) for p in package_files]
             self.logger.log("Packages found:")
-            for p in packages:
-                self.logger.log(p)
+            for package in packages:
+                self.logger.log(str(package))
         # create package
-        pkg = Package(name, name, date, packages)
+        package = LocalPackage(name, date, packages)
         # if previously installed, add install information
         if name in self.packages:
-            pkg.installed = self.packages[pkg.name].installed
-        self.packages[name] = pkg
+            package.installed_in = self.packages[package.name].installed_in
+        self.packages[name] = package
         return True
-    def fetchFromOPM(self, pkg):
-        downloader = pkg.getDownloader(self.logger)
-        packages = [f"{pkg.package_dir}/{fl.getFilename()}" for fl in pkg.files]
-        return self.fetchFromDownloader(pkg.name, downloader, pkg.file_date, packages)
-    def getLazbuild(self):
-        lazarus = self.installations.get(self.selected)
-        if lazarus is None:
-            self.logger.error(f"No such lazarus installation found: {self.selected}")
+
+    def fetch_opm_package(self, package: OPMPackage) -> bool:
+        downloader = package.get_downloader(self.logger)
+        packages = [package.package_dir/fl.get_file_name() for fl in package.files]
+        return self.fetch_from_downloader(package.name, downloader, package.file_date, packages)
+
+    def get_lazbuild_path(self) -> Path:
+        installation_path = self.installations.get(self.selected_installation)
+        if installation_path is None:
+            self.logger.error(f"No such lazarus installation found: {self.selected_installation}")
             return None
-        return lazarus/lazbuildName
-    def installPackage(self, packageName):
+        return installation_path/LAZBUILD_EXEC_NAME
+
+    def install_package(self, package_name: str) -> bool:
         # resolve package
-        pkg = self.packages.get(packageName)
-        if pkg is None:
-            self.logger.error(f"Package {packageName} not found")
+        local_package = self.packages.get(package_name)
+        if local_package is None:
+            self.logger.error(f"Package {package_name} not found")
             return False
-        pkgDir = self.target/"packages"/pkg.directory
+        local_dir = self._get_package_directory(local_package)
         #resolve lazbuild
-        lazbuild = self.getLazbuild()
-        if lazbuild is None:
+        lazbuild_path = self.get_lazbuild_path()
+        if lazbuild_path is None:
             return False
         # call lazbuild for all lpks
         result = True
-        for fl in pkg.package_files:
-            self.logger.log(f"installing {fl}")
-            pkgFile = pkgDir/fl
-            result = result and call([lazbuild.resolve(), "--add-package-link", pkgFile.resolve()]) == 0
+        for file_name in local_package.package_files:
+            self.logger.log(f"installing {file_name}")
+            lpk_file = local_dir/file_name
+            result = result and call([lazbuild_path.resolve(), "--add-package-link", lpk_file.resolve()]) == 0
         # add lazarus version to installed list
-        pkg.installed.add(str(self.selected))
+        local_package.installed_in.add(str(self.selected_installation))
         return result
-    def addLazarus(self, name, path):
+
+    def add_installation(self, name: str, path: Path) -> bool:
         self.installations[name] = str(path.resolve())
-        if self.selected is None:
-            self.selected = name
+        if self.selected_installation is None:
+            self.selected_installation = name
         return True
-    def removeLazarus(self, name):
+
+    def remove_installation(self, name: str) -> bool:
         if name not in self.installations:
             self.logger.error(f"Installation {name} not found")
             return False
-        if self.selected == name:
-            self.selected = None if len(self.installations) == 0 else self.installations.keys()[0]
+        if self.selected_installation == name:
+            self.selected_installation = None if len(self.installations) == 0 else self.installations.keys()[0]
         del self.installations[name]
         return True
-    def selectLazarus(self, name):
+
+    def select_installation(self, name: str) -> bool:
         if name is not None and name not in self.installations:
             return False
-        self.selected = name
+        self.selected_installation = name
         return True
-    def packageByPackage(self, lpkName):
-        for _, pkg in self.packages.items():
-            for fl in pkg.package_files:
-                fName = Path(fl).name
-                if fName == lpkName:
-                    return pkg
+
+    def package_by_lpk(self, lpk_name: str) -> LocalPackage:
+        for package in self.packages.values():
+            for package_file in package.package_files:
+                if package_file.name == lpk_name:
+                    return package
         return None
-    def getLazarusbasePackages(self):
-        lazarus = self.installations.get(self.selected)
-        compDir = lazarus/"components"
-        result = ["fcl.lpk", "lcl.lpk", "lclbase.lpk"]
+
+    def get_base_package_files(self) -> Set[str]:
+        lazarus = self.installations.get(self.selected_installation)
+        components_dir = lazarus/"components"
+        result = {"fcl.lpk", "lcl.lpk", "lclbase.lpk"}
         if lazarus is None:
-            self.logger.error(f"No such lazarus installation found: {self.selected}")
+            self.logger.error(f"No such lazarus installation found: {self.selected_installation}")
             return None
-        result.extend([p.name.lower() for p in compDir.rglob("*.lpk")])
+        result.update({p.name.lower() for p in components_dir.rglob("*.lpk")})
         return result

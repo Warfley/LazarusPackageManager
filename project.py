@@ -1,23 +1,28 @@
+from typing import List
+from pathlib import Path
 from xml.etree import ElementTree
 from subprocess import call
 
 class LazarusProject:
-    def __init__(self, lpiFile):
-        self.lpiFile = lpiFile
-        self.tree = ElementTree.parse(lpiFile)
-    def build(self, lazbuild, mode=None):
-        callArgs = [str(lazbuild.resolve())]
-        if mode is not None:
-            callArgs.append(f"--build-mode={mode}")
-        callArgs.append(str(self.lpiFile.resolve()))
-        return call(callArgs) == 0
-    def getModes(self):
-        optNode = self.tree.getroot().find("ProjectOptions")
-        modeNode = optNode.find("BuildModes")
-        return [item.attrib["Name"] for item in modeNode if item.tag.startswith("Item")]
-    def getDependencies(self):
-        optNode = self.tree.getroot().find("ProjectOptions")
-        reqNode = optNode.find("RequiredPackages")
-        if reqNode is None:
+    def __init__(self, lpi_file: Path):
+        self.lpi_file: Path = lpi_file
+        self.lpi_data: ElementTree.ElementTree = ElementTree.parse(lpi_file)
+
+    def build(self, lazbuild_path: Path, build_mode: str = None) -> bool:
+        call_args: List[str] = [str(lazbuild_path.resolve())]
+        if build_mode is not None:
+            call_args.append(f"--build-mode={build_mode}")
+        call_args.append(str(self.lpi_file.resolve()))
+        return call(call_args) == 0
+
+    def get_build_modes(self) -> List[str]:
+        options_node: ElementTree.Element = self.lpi_data.getroot().find("ProjectOptions")
+        mode_node: ElementTree.Element = options_node.find("BuildModes")
+        return [item_node.attrib["Name"] for item_node in mode_node if item_node.tag.startswith("Item")]
+
+    def get_dependencies(self) -> List[str]:
+        options_node: ElementTree.Element = self.lpi_data.getroot().find("ProjectOptions")
+        requirements_node: ElementTree.Element = options_node.find("RequiredPackages")
+        if requirements_node is None:
             return []
-        return [item[0].attrib["Value"] for item in reqNode]
+        return [item_node[0].attrib["Value"] for item_node in requirements_node]

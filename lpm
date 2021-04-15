@@ -1,215 +1,210 @@
 #!/usr/bin/env python3
 import sys
+from typing import List, Tuple
 from pathlib import Path
 from argparse import ArgumentParser
 from os import makedirs
 from shutil import get_terminal_size
-from download import HTTPDownload, GITDownload, SVNDownload
-from packagemanager import PackageManager
-from opm import OnlinePackageManager
+from download import Downloader, HTTPDownloader, GITDownloader, SVNDownloader
+from packagemanager import PackageManager, LocalPackage
+from opm import OnlinePackageManager, OPMPackage
 from logger import Logger, LogLevel
 from project import LazarusProject
 from subprocess import call
 
-def performUpdate(opm):
-    opm.downloadPackageList()
+def handle_update(opm: OnlinePackageManager) -> bool:
+    opm.update_package_list()
     return True
 
-def performFetch(lpm, opm, packages, logger):
+def handle_fetch(lpm: PackageManager, opm: OnlinePackageManager, packages: List[str], logger: Logger) -> bool:
     result = True
-    for pkgName in packages:
-        pkg = opm.packages.get(pkgName)
-        if pkg is None:
-            logger.error(f"Package {pkgName} not found... skipping")
+    for package_name in packages:
+        package: OPMPackage = opm.packages.get(package_name)
+        if package is None:
+            logger.error(f"Package {package_name} not found... skipping")
             result = False
             continue
-        result = result and lpm.fetchFromOPM(pkg)
+        result = result and lpm.fetch_opm_package(package)
     return result
 
-def performInstall(lpm, opm, packages, logger):
-    fetchFirst = [p for p in packages if p not in lpm.packages]
-    result = performFetch(lpm, opm, fetchFirst, logger)
-    for pkgName in packages:
-        result = result and lpm.installPackage(pkgName)
+def handle_install(lpm: PackageManager, opm: OnlinePackageManager, packages: List[str], logger: Logger) -> bool:
+    requires_fetch = [p for p in packages if p not in lpm.packages]
+    result = handle_fetch(lpm, opm, requires_fetch, logger)
+    for package_name in packages:
+        result = result and lpm.install_package(package_name)
     return result
 
-def performUpgrade(lpm, opm, packages, logger):
+def handle_upgrade(lpm: PackageManager, opm: OnlinePackageManager, packages: List[str], logger: Logger) -> bool:
     result = True
     if len(packages) == 0:
         packages = [name for name, _ in lpm.packages.items()]
-    updateable = [p for p in packages if p in opm.packages]
-    for p in updateable:
-        pkg = lpm.packages.get(p)
-        if pkg is None:
-            logger.error(f"Package {p} not found... skipping")
+    opm_packages: List[str] = [p for p in packages if p in opm.packages]
+    for package_name in opm_packages:
+        local_package: LocalPackage = lpm.packages.get(package_name)
+        if local_package is None:
+            logger.error(f"Package {package_name} not found... skipping")
             result = False
             continue
-        opmPkg = opm.packages[p]
-        if pkg.date >= opmPkg.file_date:
-            logger.log(f"{p} is up to date")
+        opm_package: OPMPackage = opm.packages[package_name]
+        if local_package.date >= opm_package.file_date:
+            logger.log(f"{package_name} is up to date")
             continue
-        logger.log(f"updating {p}")
-        pkgResult = performFetch(lpm, opm, [p], logger)
-        if not pkgResult:
+        logger.log(f"updating {package_name}")
+        fetch_success = handle_fetch(lpm, opm, [package_name], logger)
+        if not fetch_success:
             result = False
             continue
-        sel = lpm.selected
-        for i in pkg.installed:
-            if lpm.selectLazarus(i):
-                result = result and performInstall(lpm, opm, [p], logger)
+        current_selection: str = lpm.selected_installation
+        for lazarus_installation in local_package.installed_in:
+            if lpm.select_installation(lazarus_installation):
+                result = result and handle_install(lpm, opm, [package_name], logger)
             else:
                 result = False
-            lpm.selectLazarus(sel)
+            lpm.select_installation(current_selection)
     return result
 
-def performSearch(opm, searchstring):
-    result = opm.searchPackages(searchstring)
-    nameSize = 0
-    catSize = 0
-    for pkg in result:
-        nameSize = max(nameSize, len(pkg.name))
-        cats = pkg.categories[:2]
-        cat = ", ".join(pkg.categories[0:2])
-        if len(cats) < len(pkg.categories):
-            cat += ", ..."
-        catSize = max(catSize, len(cat))
-    for pkg in result:
-        namePadding = " "*(nameSize-len(pkg.name))
-        cats = pkg.categories[:2]
-        cat = ", ".join(pkg.categories[0:2])
-        if len(cats) < len(pkg.categories):
-            cat += ", ..."
-        catPadding = " "*(catSize-len(cat))
-        desc = pkg.description.replace("\n", " ")
-        desc = desc.replace("\r", "")
-        separator = " | "
-        wndSize = get_terminal_size((0, 0)).columns
-        totalLen = nameSize + catSize + len(desc) + 2*len(separator)
-        totalLenWithouDesc = totalLen - len(desc)
-        if totalLen > wndSize > 0 and totalLenWithouDesc + 3 < wndSize:
-            desc = desc[:wndSize-totalLenWithouDesc-3] + "..."
-        print(f"{pkg.name}{namePadding}{separator}{cat}{catPadding}{separator}{desc}")
-    return len(result) > 0
+def _get_package_list_entry(package: OPMPackage, max_categories: int = 2) -> Tuple[str, str, str]:
+    name = package.name
+    category_list = package.categories if len(package.categories) <= max_categories else package.categories[:max_categories] + ["..."]
+    description = package.description.replace("\r", "").replace("\n", " ")
+    return name, ", ".join(category_list), description
 
-def performDirectDownload(lpm, name, url, dltype, branch, packages, logger):
-    download = None
-    if dltype == "git":
-        download = GITDownload(url, branch, logger=logger)
-    elif dltype == "svn":
-        download = SVNDownload(url, logger=logger)
-    elif dltype == "http":
-        download = HTTPDownload(url, logger=logger)
-    if download is None:
-        print(f"download method {dltype} unkown")
+def handle_search(opm: OnlinePackageManager, search_string: str) -> bool:
+    separator = " | "
+    search_results = opm.search_packages(search_string)
+    entries = [_get_package_list_entry(package) for package in search_results]
+    
+    name_column_size = max(len(name for name, _, _ in entries))
+    categories_column_size = max(len(categories for _, categories, _ in entries))
+    window_size = get_terminal_size((80, 40)).columns
+    description_size = window_size - name_column_size - categories_column_size - 3
+    
+    for name, categories, description in entries:
+        name_padding = " " * (name_column_size - len(name))
+        categories_padding = " " * (categories_column_size - len(categories))
+        if description_size > 0 and len(description) > description_size:
+            description = description[:description_size-3] + "..."
+        print(f"{name}{name_padding}{separator}{categories}{categories_padding}{separator}{description}")
+    return len(search_results) > 0
+
+def handle_direct_download(lpm: PackageManager, name: str, url: str, download_method: str, branch: str, packages: List[str], logger: Logger) -> bool:
+    downloader: Downloader = None
+    if download_method == "git":
+        downloader = GITDownloader(url, branch, logger=logger)
+    elif download_method == "svn":
+        downloader = SVNDownloader(url, logger=logger)
+    elif download_method == "http":
+        downloader = HTTPDownloader(url, logger=logger)
+    if downloader is None:
+        print(f"Download method {download_method} unknown")
         return False
-    return lpm.fetchFromDownloader(name, download, 0, packages)
+    return lpm.fetch_from_downloader(name, downloader, 0, packages)
 
-def handleLazarus(lpm, action, name, path):
+def handle_lazarus_installation(lpm: PackageManager, action: str, name: str, path: Path):
     if action == "add":
-        return lpm.addLazarus(name, Path(path).expanduser())
+        return lpm.add_installation(name, path)
     if action == "delete":
-        return lpm.removeLazarus(name)
+        return lpm.remove_installation(name)
     if action == "select":
-        return lpm.selectLazarus(name)
+        return lpm.select_installation(name)
     return False
 
-def performBuild(lpm, opm, project, modes, yes, logger):
-    lazbuild = lpm.getLazbuild()
-    if lazbuild is None:
+def handle_build(lpm: PackageManager, opm: OnlinePackageManager, lpi_path: Path, build_modes: List[str], assume_yes: bool, logger: Logger):
+    lazbuild_path = lpm.get_lazbuild_path()
+    if lazbuild_path is None:
         return False
-    project = LazarusProject(Path(project).expanduser())
-    basePackages = lpm.getLazarusbasePackages()
-    if basePackages is None:
+    project: LazarusProject = LazarusProject(lpi_path)
+    base_packages = lpm.get_base_package_files()
+    if base_packages is None:
         return False
-    availableModes = project.getModes()
-    if len(modes) == 0:
-        modes = availableModes
-    dependencies = [f"{d}.lpk" for d in project.getDependencies()]
-    for dep in dependencies:
-        dep = dep.lower()
-        if dep in basePackages:
+    project_modes = project.get_build_modes()
+    if not build_modes:
+        build_modes = project_modes
+    dependencies = [f"{d}.lpk".lower() for d in project.get_dependencies()]
+    for dependency in dependencies:
+        if dependency in base_packages:
             continue
-        pkg = lpm.packageByPackage(dep)
+        local_package: LocalPackage = lpm.package_by_lpk(dependency)
         toInstall = None
-        if (pkg is not None) and (lpm.selected not in pkg.installed):
-            toInstall = pkg.name
-        elif pkg is None:
-            opmPkg = opm.packageMap.get(dep)
+        if (local_package is not None) and (lpm.selected_installation not in local_package.installed):
+            toInstall = local_package.name
+        elif local_package is None:
+            opmPkg = opm.package_by_file.get(dependency)
             if opmPkg is None:
-                logger.error(f"dependency {dep} could not be resolved")
+                logger.error(f"dependency {dependency} could not be resolved")
                 return False
             toInstall = opmPkg.name
         if toInstall is not None:
-            if not yes:
-                print(f"Dependency {dep} is found but not installed, install now?")
+            if not assume_yes:
+                print(f"Dependency {dependency} is found but not installed, install now?")
                 inp = input("[Y/n] > ")
                 if inp.lower() == "n":
-                    logger.error(f"dependency {dep} could not be resolved")
+                    logger.error(f"dependency {dependency} could not be resolved")
                     return False
-            performInstall(lpm, opm, [toInstall], logger)
+            handle_install(lpm, opm, [toInstall], logger)
 
     result = True
-    for mode in modes:
-        if mode not in availableModes:
-            logger.error(f"Buildmode {mode} requested but not available for project")
+    for build_mode in build_modes:
+        if build_mode not in project_modes:
+            logger.error(f"Buildmode {build_mode} requested but not available for project")
             result = False
             continue
-        result = result and project.build(lazbuild, mode)
+        result = result and project.build(lazbuild_path, build_mode)
     return result
 
-def performSelfUpdate():
+def handle_self_update():
     git_dir = Path(__file__).resolve().parent
-    return call(["git", "pull"], cwd=git_dir) == 0
+    return call(["git", "pull"], cwd=str(git_dir)) == 0
 
 def main():
     parser = ArgumentParser(description="online package manager CLI")
     parser.add_argument("--target", type=str, help="target directory for the package list and downloaded packages (default=~/.lpm)", default="~/.lpm")
     parser.add_argument("--quiet", "-q", action="store_true", required=False, help="only output errors", default=False)
-    sp = parser.add_subparsers(dest="mainaction", required=True)
+    action_parser = parser.add_subparsers(dest="mainaction", required=True)
 
-    updateArg = sp.add_parser("update", help="updates package list from server")
+    update_parser = action_parser.add_parser("update", help="updates package list from server")
 
-    upgradeArg = sp.add_parser("upgrade", help="update packages from server")
-    upgradeArg.add_argument("packages", type=str, nargs="*", help="packages to upgrade, if none are given all are updated")
+    upgrade_parser = action_parser.add_parser("upgrade", help="update packages from server")
+    upgrade_parser.add_argument("packages", type=str, nargs="*", help="packages to upgrade, if none are given all are updated")
 
-    fetchArg = sp.add_parser("fetch", help="download newest version of a package")
-    fetchArg.add_argument("packages", type=str, help="packages to download", nargs="+")
+    fetch_parser = action_parser.add_parser("fetch", help="download newest version of a package")
+    fetch_parser.add_argument("packages", type=str, help="packages to download", nargs="+")
 
-    installArg = sp.add_parser("install", help="installs the package to a lazarus installation")
-    installArg.add_argument("packages", type=str, help="packages to install", nargs="+")
+    install_parser = action_parser.add_parser("install", help="installs the package to a lazarus installation")
+    install_parser.add_argument("packages", type=str, help="packages to install", nargs="+")
 
-    searchArg = sp.add_parser("search", help="search for packages")
-    searchArg.add_argument("searchstring", type=str, help="the string to search for")
+    search_parser = action_parser.add_parser("search", help="search for packages")
+    search_parser.add_argument("searchstring", type=str, help="the string to search for")
 
-    rawArg = sp.add_parser("direct-download", help="download a package not using OPM")
-    rawArg.add_argument("--type", "-t", type=str, choices=["http", "git", "svn"], help="downloading method. Default=http", default="http")
-    rawArg.add_argument("--branch", "-b", type=str, help="branch to checkout (git only). Default=master", default="master")
-    rawArg.add_argument("name", type=str, help="the name under which this package will be registered")
-    rawArg.add_argument("url", type=str, help="the download url of the file")
-    rawArg.add_argument("packages", type=str, nargs="*", help="list of lpk files in that file, if none are given a file search for *.lpk will be done")
+    download_parser = action_parser.add_parser("direct-download", help="download a package not using OPM")
+    download_parser.add_argument("--type", "-t", type=str, choices=["http", "git", "svn"], help="downloading method. Default=http", default="http")
+    download_parser.add_argument("--branch", "-b", type=str, help="branch to checkout (git only). Default=master", default="master")
+    download_parser.add_argument("name", type=str, help="the name under which this package will be registered")
+    download_parser.add_argument("url", type=str, help="the download url of the file")
+    download_parser.add_argument("packages", type=str, nargs="*", help="list of lpk files in that file, if none are given a file search for *.lpk will be done")
 
-    lazArg = sp.add_parser("lazarus", help="configure lazarus installations")
-    lazArg.add_argument("action", type=str, choices=["add", "delete", "select"], help="action to perform")
-    lazArg.add_argument("name", type=str, help="name of the lazarus installation (for references)")
-    lazArg.add_argument("path", nargs="?", type=str, help="path of the lazarus installation")
+    lazarus_parser = action_parser.add_parser("lazarus", help="configure lazarus installations")
+    lazarus_parser.add_argument("action", type=str, choices=["add", "delete", "select"], help="action to perform")
+    lazarus_parser.add_argument("name", type=str, help="name of the lazarus installation (for references)")
+    lazarus_parser.add_argument("path", nargs="?", type=str, help="path of the lazarus installation")
 
-    buildArg = sp.add_parser("build", help="buidling lazarus projects")
-    buildArg.add_argument("--yes", "-y", action="store_true", default=False, required=False, help="answer all yes-no questions with yes")
-    buildArg.add_argument("project", type=str, help="lpi file to build")
-    buildArg.add_argument("modes", type=str, nargs="*", help="the build modes to build, if left out, all are build")
+    build_parser = action_parser.add_parser("build", help="buidling lazarus projects")
+    build_parser.add_argument("--yes", "-y", action="store_true", default=False, required=False, help="answer all yes-no questions with yes")
+    build_parser.add_argument("project", type=str, help="lpi file to build")
+    build_parser.add_argument("modes", type=str, nargs="*", help="the build modes to build, if left out, all are build")
 
-    selfUpdateArg = sp.add_parser("self-update", help="Update lpm via git")
+    self_update_parser = action_parser.add_parser("self-update", help="Update lpm via git")
 
     args = parser.parse_args()
 
-    quiet = args.quiet
+    quiet: bool = args.quiet
     target = Path(args.target).expanduser()
-    makedirs(target, exist_ok=True)
+    target.mkdir(parents=True, exist_ok=True)
 
     logger = Logger(LogLevel.WARNING if quiet else LogLevel.DEBUG)
 
     opm = OnlinePackageManager(target, logger)
-    opm.loadPackageList()
+    opm.load_package_data()
 
     lpm = PackageManager(target, logger)
     lpm.load()
@@ -217,23 +212,23 @@ def main():
     action = args.mainaction
     success = False
     if action == "update":
-        success = performUpdate(opm)
+        success = handle_update(opm)
     elif action == "upgrade":
-        success = performUpgrade(lpm, opm, args.packages, logger)
+        success = handle_upgrade(lpm, opm, args.packages, logger)
     elif action == "fetch":
-        success = performFetch(lpm, opm, args.packages, logger)
+        success = handle_fetch(lpm, opm, args.packages, logger)
     elif action == "install":
-        success = performInstall(lpm, opm, args.packages, logger)
+        success = handle_install(lpm, opm, args.packages, logger)
     elif action == "search":
-        success = performSearch(opm, args.searchstring)
+        success = handle_search(opm, args.searchstring)
     elif action == "direct-download":
-        success = performDirectDownload(lpm, args.name, args.url, args.type, args.branch, args.packages, logger)
+        success = handle_direct_download(lpm, args.name, args.url, args.type, args.branch, args.packages, logger)
     elif action == "lazarus":
-        success = handleLazarus(lpm, args.action, args.name, args.path)
+        success = handle_lazarus_installation(lpm, args.action, args.name, Path(args.path).expanduser())
     elif action == "build":
-        success = performBuild(lpm, opm, args.project, args.modes, args.yes, logger)
+        success = handle_build(lpm, opm, Path(args.project).expanduser(), args.modes, args.yes, logger)
     elif action == "self-update":
-        success = performSelfUpdate()
+        success = handle_self_update()
 
     lpm.save()
     if not success:
