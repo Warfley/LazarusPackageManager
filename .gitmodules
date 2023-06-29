@@ -1,0 +1,3 @@
+[submodule "LazTermUtils"]
+	path = LazTermUtils
+	url = https://github.com/Warfley/LazTermUtils.git
